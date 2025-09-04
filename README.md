@@ -1,4 +1,4 @@
-# Intelligent Document Analyzer (RAG-based)
+# Intelligent Document Analyzer Bot (RAG-based)
 
 This project is a Spring Boot + PostgreSQL application that supports document upload, chunking, embedding generation, and retrieval-augmented generation (RAG) for intelligent document Q&A.
 
