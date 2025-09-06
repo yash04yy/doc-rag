@@ -1,20 +1,32 @@
 package com.documentrag.doc_rag.controller;
 
 import com.documentrag.doc_rag.model.Chunk;
+import com.documentrag.doc_rag.model.Document;
+import com.documentrag.doc_rag.repository.DocumentRepository;
 import com.documentrag.doc_rag.service.DocumentChunker;
+import com.documentrag.doc_rag.service.EmbeddingService;
 import com.documentrag.doc_rag.service.PdfTextExtractor;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.util.StringUtils;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestPart;
+import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -22,51 +34,100 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/api")
 public class UploadController {
-    private final PdfTextExtractor pdfTextExtractor;
-    private final DocumentChunker documentChunker;
-    
-    public UploadController(PdfTextExtractor pdfTextExtractor, DocumentChunker documentChunker) {
-        this.pdfTextExtractor = pdfTextExtractor;
-        this.documentChunker = documentChunker;
-    }
-    @Value("${app.storage.root:uploads}")
-    private String storageRoot;
 
-    @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public Map<String, Object> upload(@RequestPart("file") MultipartFile file) throws IOException {
-        if (file.isEmpty()) throw new IllegalArgumentException("Empty file");
-        String original = StringUtils.cleanPath(file.getOriginalFilename());
-        String id = UUID.randomUUID().toString();
-        Path dir = Path.of(storageRoot, id);
-        Files.createDirectories(dir);
+	private final PdfTextExtractor pdfTextExtractor;
+	private final DocumentChunker documentChunker;
+	private final DocumentRepository documentRepository;
+	private final EmbeddingService embeddingService;
 
-        // Save raw PDF
-        Path pdfPath = dir.resolve(original);
-        Files.write(pdfPath, file.getBytes());
+	public UploadController(PdfTextExtractor pdfTextExtractor, DocumentChunker documentChunker,
+			DocumentRepository documentRepository, EmbeddingService embeddingService) {
+		this.pdfTextExtractor = pdfTextExtractor;
+		this.documentChunker = documentChunker;
+		this.documentRepository = documentRepository;
+		this.embeddingService = embeddingService;
+	}
 
-        // Extract text
-        String text = pdfTextExtractor.extractText(file.getBytes());
+	@Value("${app.storage.root:uploads}")
+	private String storageRoot;
 
-        // Save raw text (temporary; DB comes later in Week 1 Day 5)
-        Path txtPath = dir.resolve(original.replaceAll("\\.pdf$", "") + ".txt");
-        Files.writeString(txtPath, text);
-        
-        List<Chunk> chunks = documentChunker.chunkText(id, text);
+	@PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+	public Map<String, Object> upload(@RequestPart("file") MultipartFile file) throws IOException {
+		if (file.isEmpty()) {
+			throw new IllegalArgumentException("Empty file");
+		}
 
-        // Save chunks as JSON
-        Path chunksPath = dir.resolve("chunks.json");
-        new ObjectMapper().writeValue(chunksPath.toFile(), chunks);
+		String original = StringUtils.cleanPath(file.getOriginalFilename());
+		String id = UUID.randomUUID().toString();
 
+		// Resolve storage dir and ensure it exists
+		Path root = Path.of(storageRoot).toAbsolutePath().normalize();
+		Path dir = root.resolve(id);
+		Files.createDirectories(dir);
 
-        return Map.of(
-                "id", id,
-                "file", original,
-                "storedPdf", pdfPath.toString(),
-                "storedTxt", txtPath.toString(),
-                "storedChunks", chunksPath.toString(),
-                "chunks", chunks.size(),
-                "charsExtracted", text.length(),
-                "uploadedAt", Instant.now().toString()
-            );
-    }
+		// Save PDF using Files.copy
+		Path pdfPath = dir.resolve(original);
+		try (InputStream in = file.getInputStream()) {
+			Files.copy(in, pdfPath, StandardCopyOption.REPLACE_EXISTING);
+		}
+
+		// Extract text
+		byte[] pdfBytes = Files.readAllBytes(pdfPath);
+		String text = pdfTextExtractor.extractText(pdfBytes);
+
+		if (text == null || text.trim().isEmpty()) {
+			throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+					"No extractable text found. This PDF appears to be scanned/image-only.");
+		}
+
+		// Save extracted text
+		Path txtPath = dir.resolve(original.replaceAll("\\.pdf$", "") + ".txt");
+		Files.writeString(txtPath, text);
+
+		// Chunk text
+		List<Chunk> chunks = documentChunker.chunkText(id, text);
+
+		// Persist chunks to JSON
+		Path chunksPath = dir.resolve("chunks.json");
+		new ObjectMapper().writeValue(chunksPath.toFile(), chunks);
+
+		// Generate Embedding
+		List<Map<String, Object>> embeddingsOut = new ArrayList<>(chunks.size());
+		int embeddedCount = 0;
+		for (Chunk c : chunks) {
+			String content = c.getContent();
+			if (content == null || content.isBlank()) {
+				continue;
+			}
+			List<Double> vector;
+			try {
+				vector = embeddingService.getEmbedding(content);
+			} catch (Exception ex) {
+				vector = Collections.emptyList(); // continue on error
+			}
+			Map<String, Object> rec = new LinkedHashMap<>();
+			rec.put("index", c.getIndex());
+			rec.put("start", c.getStartOffset());
+			rec.put("end", c.getEndOffset());
+			rec.put("embedding", vector);
+			embeddingsOut.add(rec);
+			if (!vector.isEmpty())
+				embeddedCount++;
+		}
+
+		Path embeddingsPath = dir.resolve("embeddings.json");
+		new ObjectMapper().writeValue(embeddingsPath.toFile(), embeddingsOut);
+
+		// Persist metadata
+		Document doc = new Document();
+		doc.setName(original);
+		doc.setUploadDate(Instant.now());
+		doc.setNumChunks(chunks.size());
+		Document saved = documentRepository.save(doc);
+
+		return Map.of("dbId", saved.getId(), "file", original, "storedPdf", pdfPath.toString(), "storedTxt",
+				txtPath.toString(), "storedChunks", chunksPath.toString(), "storedEmbeddings",
+				embeddingsPath.toString(), "chunks", chunks.size(), "chunksEmbedded", embeddedCount, "charsExtracted",
+				text.length(), "uploadedAt", saved.getUploadDate().toString());
+	}
 }
