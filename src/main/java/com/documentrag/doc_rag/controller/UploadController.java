@@ -2,6 +2,8 @@ package com.documentrag.doc_rag.controller;
 
 import com.documentrag.doc_rag.model.Chunk;
 import com.documentrag.doc_rag.model.Document;
+import com.documentrag.doc_rag.model.DocumentChunk;
+import com.documentrag.doc_rag.repository.DocumentChunkRepository;
 import com.documentrag.doc_rag.repository.DocumentRepository;
 import com.documentrag.doc_rag.service.DocumentChunker;
 import com.documentrag.doc_rag.service.EmbeddingService;
@@ -24,12 +26,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 
 @RestController
 @RequestMapping("/api")
@@ -38,13 +35,16 @@ public class UploadController {
 	private final PdfTextExtractor pdfTextExtractor;
 	private final DocumentChunker documentChunker;
 	private final DocumentRepository documentRepository;
+	private final DocumentChunkRepository documentChunkRepository;
 	private final EmbeddingService embeddingService;
 
 	public UploadController(PdfTextExtractor pdfTextExtractor, DocumentChunker documentChunker,
-			DocumentRepository documentRepository, EmbeddingService embeddingService) {
+			DocumentRepository documentRepository, DocumentChunkRepository documentChunkRepository,
+			EmbeddingService embeddingService) {
 		this.pdfTextExtractor = pdfTextExtractor;
 		this.documentChunker = documentChunker;
 		this.documentRepository = documentRepository;
+		this.documentChunkRepository = documentChunkRepository;
 		this.embeddingService = embeddingService;
 	}
 
@@ -91,7 +91,14 @@ public class UploadController {
 		Path chunksPath = dir.resolve("chunks.json");
 		new ObjectMapper().writeValue(chunksPath.toFile(), chunks);
 
-		// Generate Embedding
+		// Create Document entity
+		Document doc = new Document();
+		doc.setName(original);
+		doc.setUploadDate(Instant.now());
+		doc.setNumChunks(chunks.size());
+		Document saved = documentRepository.save(doc);
+
+		// Generate & persist embedding in DB
 		List<Map<String, Object>> embeddingsOut = new ArrayList<>(chunks.size());
 		int embeddedCount = 0;
 		for (Chunk c : chunks) {
@@ -105,25 +112,32 @@ public class UploadController {
 			} catch (Exception ex) {
 				vector = Collections.emptyList(); // continue on error
 			}
+			
+			if (!vector.isEmpty()) {
+				float[] embeddingArray = new float[vector.size()];
+				for (int i = 0; i < vector.size(); i++) {
+					 embeddingArray[i] = vector.get(i).floatValue();
+				}
+				
+                DocumentChunk entity = new DocumentChunk();
+                entity.setDocument(saved);
+                entity.setChunkIndex(c.getIndex());
+                entity.setContent(content);
+                entity.setEmbedding(embeddingArray); // assuming you mapped vector column
+                documentChunkRepository.save(entity);
+                embeddedCount++;
+            }
+			
 			Map<String, Object> rec = new LinkedHashMap<>();
 			rec.put("index", c.getIndex());
 			rec.put("start", c.getStartOffset());
 			rec.put("end", c.getEndOffset());
 			rec.put("embedding", vector);
 			embeddingsOut.add(rec);
-			if (!vector.isEmpty())
-				embeddedCount++;
 		}
 
 		Path embeddingsPath = dir.resolve("embeddings.json");
 		new ObjectMapper().writeValue(embeddingsPath.toFile(), embeddingsOut);
-
-		// Persist metadata
-		Document doc = new Document();
-		doc.setName(original);
-		doc.setUploadDate(Instant.now());
-		doc.setNumChunks(chunks.size());
-		Document saved = documentRepository.save(doc);
 
 		return Map.of("dbId", saved.getId(), "file", original, "storedPdf", pdfPath.toString(), "storedTxt",
 				txtPath.toString(), "storedChunks", chunksPath.toString(), "storedEmbeddings",
