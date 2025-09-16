@@ -1,0 +1,70 @@
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: doc-rag-uploads-pvc
+  labels:
+    app: doc-rag
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: doc-rag
+  labels:
+    app: doc-rag
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: 8080
+  selector:
+    app: doc-rag
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: doc-rag
+  labels:
+    app: doc-rag
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: doc-rag
+  template:
+    metadata:
+      labels:
+        app: doc-rag
+    spec:
+      containers:
+      - name: doc-rag
+        image: yash04yy/doc-rag:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+        env:
+        - name: SPRING_DATASOURCE_URL
+          value: jdbc:postgresql://postgres:5432/postgres
+        - name: SPRING_DATASOURCE_USERNAME
+          value: postgres
+        - name: SPRING_DATASOURCE_PASSWORD
+          value: yash1234
+        - name: EMBEDDING_API_URL
+          value: http://192.168.1.103:1234/v1/embeddings
+        - name: LMSTUDIO_BASE_URL
+          value: http://192.168.1.103:1234
+        - name: LMSTUDIO_API_KEY
+          value: lm-studio
+        volumeMounts:
+        - mountPath: /app/uploads
+          name: uploads-volume
+      volumes:
+      - name: uploads-volume
+        persistentVolumeClaim:
+          claimName: doc-rag-uploads-pvc

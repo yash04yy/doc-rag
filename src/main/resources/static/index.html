@@ -1,0 +1,166 @@
+<html>
+   <head>
+      <meta charset="utf-8" />
+      <title>Doc RAG Demo</title>
+      <style>
+         body {
+            font-family: "Segoe UI", Tahoma, sans-serif;
+            margin: 0;
+            background: #f4f6f8;
+            color: #333;
+         }
+
+         .container {
+            max-width: 800px;
+            margin: 2rem auto;
+            padding: 2rem;
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+         }
+
+         h1 {
+            text-align: center;
+            margin-bottom: 2rem;
+            color: #222;
+         }
+
+         .row {
+            margin-bottom: 2rem;
+         }
+
+         h3 {
+            margin-bottom: 0.8rem;
+            color: #444;
+         }
+
+         input[type="file"],
+         input[type="text"],
+         input[type="number"] {
+            width: 100%;
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid #ccc;
+            font-size: 1rem;
+            margin-bottom: 0.8rem;
+            transition: border 0.2s;
+         }
+
+         input:focus {
+            outline: none;
+            border-color: #4a90e2;
+         }
+
+         button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            background: #4a90e2;
+            color: #fff;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: background 0.3s;
+         }
+
+         button:hover {
+            background: #357ab8;
+         }
+
+         #uploadStatus {
+            margin-top: 0.5rem;
+            font-size: 0.9rem;
+            color: #555;
+         }
+
+         .answer {
+            background: #f9fafc;
+            border-left: 4px solid #4a90e2;
+            padding: 12px;
+            border-radius: 8px;
+            min-height: 50px;
+            white-space: pre-wrap;
+         }
+
+         .chunks {
+            white-space: pre-wrap;
+            background: #f1f3f5;
+            border-radius: 8px;
+            padding: 12px;
+            font-size: 0.9rem;
+            border: 1px solid #ddd;
+            max-height: 250px;
+            overflow-y: auto;
+         }
+      </style>
+   </head>
+   <body>
+      <div class="container">
+         <h1>📄 Doc RAG Demo</h1>
+
+         <div class="row">
+            <h3>1) Upload a Document</h3>
+            <input type="file" id="fileInput" />
+            <button id="uploadBtn">Upload</button>
+            <div id="uploadStatus"></div>
+         </div>
+
+         <div class="row">
+            <h3>2) Ask a Question</h3>
+            <input type="text" id="question" placeholder="Type your question..." />
+            <label style="display:block; margin: 0.5rem 0;">
+               Top K:
+               <input type="number" id="k" value="5" min="1" max="20" style="width:80px;" />
+            </label>
+            <button id="askBtn">Ask</button>
+         </div>
+
+         <div class="row">
+            <h3>Answer</h3>
+            <div id="answer" class="answer">(no answer yet)</div>
+         </div>
+
+         <div class="row">
+            <h3>Sources</h3>
+            <div id="sources" class="chunks">(no sources yet)</div>
+         </div>
+      </div>
+
+      <script>
+         const baseUrl = ""; 
+
+         document.getElementById("uploadBtn").onclick = async () => {
+            const f = document.getElementById("fileInput").files[0];
+            if (!f) { alert("Choose a file"); return; }
+            const fd = new FormData();
+            fd.append("file", f);
+
+            const res = await fetch((baseUrl || "") + "/api/upload", { method: "POST", body: fd });
+            const txt = await res.text();
+            document.getElementById("uploadStatus").innerText =
+               res.ok ? "✅ Uploaded successfully" : "❌ Upload failed: " + txt;
+         };
+
+         document.getElementById("askBtn").onclick = async () => {
+            const q = document.getElementById("question").value;
+            const k = document.getElementById("k").value;
+            if (!q) { alert("Enter a question"); return; }
+
+            const url = new URL((baseUrl || window.location.origin) + "/api/query");
+            url.searchParams.set("q", q);
+            url.searchParams.set("k", k);
+
+            const res = await fetch(url.toString(), { method: "GET" });
+            const json = await res.json();
+
+            document.getElementById("answer").innerText = json.answer || "(no answer)";
+            const sourcesEl = document.getElementById("sources");
+            sourcesEl.innerHTML = "";
+            if (Array.isArray(json.chunks)) {
+               sourcesEl.innerText = json.chunks.map(c =>
+                  `📑 docId=${c.docId}, chunkIndex=${c.chunkIndex}\n` + (c.content || "")
+               ).join("\n---\n");
+            }
+         };
+      </script> 
+   </body>
+</html>
