@@ -22,3 +22,5 @@ This project is a Spring Boot + PostgreSQL application that supports document up
 - Maven 3.8+
 - PostgreSQL (local or Docker)
 - **LM Studio** (local embedding API)
+
+<img width="1512" height="856" alt="Screenshot 2025-09-15 at 6 10 34 PM" src="https://github.com/user-attachments/assets/df083713-5528-4a5c-a74a-8ab4b9e12c66" />
