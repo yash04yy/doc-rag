@@ -1,0 +1,15 @@
+type Chunk {
+  id: ID!
+  documentId: ID!
+  chunkIndex: Int!
+  content: String!
+}
+
+type QueryChunksResult {
+  answer: String!
+  chunks: [Chunk!]!
+}
+
+type Query {
+  queryChunks(q: String!, k: Int = 5): QueryChunksResult!
+}
