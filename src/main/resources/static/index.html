@@ -36,7 +36,8 @@
 
          input[type="file"],
          input[type="text"],
-         input[type="number"] {
+         input[type="number"],
+         input[type="password"] {
             width: 100%;
             padding: 10px;
             border-radius: 8px;
@@ -66,7 +67,7 @@
             background: #357ab8;
          }
 
-         #uploadStatus {
+         #uploadStatus, #loginStatus {
             margin-top: 0.5rem;
             font-size: 0.9rem;
             color: #555;
@@ -91,32 +92,64 @@
             max-height: 250px;
             overflow-y: auto;
          }
+
+         #logoutBtn {
+            float: right;
+            background: #e65c5c;
+            margin-top: -2.5rem;
+         }
+         #logoutBtn:hover { background: #b42f2f; }
       </style>
    </head>
    <body>
-      <div class="container">
-         <h1>📄 Research Paper Analyzer</h1>
+      <div class="container" id="loginPanel" style="display:none;">
+         <h1>Sign in</h1>
+         <form id="loginForm" style="display:flex;flex-direction:column;gap:1rem;">
+            <label for="loginUser">Username:</label>
+            <input type="text" id="loginUser" autocomplete="username" />
 
-         <div class="row">
+            <label for="loginPass">Password:</label>
+            <input type="password" id="loginPass" autocomplete="current-password" />
+
+            <button id="loginBtn" type="button" style="width:100%;">Login</button>
+            <div id="loginStatus"></div>
+         </form>
+         <div style="margin-top:2rem;color:#777;font-size:0.95em;">
+            Use <b>admin/adminpass</b> (ADMIN) or <b>user/userpass</b> (USER)
+         </div>
+      </div>
+
+      <div class="container" id="mainPanel" style="display:none;">
+         <button id="logoutBtn" style="display:none;">Logout</button>
+         <h1>📄 Research Paper Analyzer</h1>
+         <div id="userInfo"></div>
+
+         <div class="row" id="uploadRow">
             <h3>1) Upload a Document</h3>
             <input type="file" id="fileInput" />
             <button id="uploadBtn">Upload</button>
             <div id="uploadStatus"></div>
          </div>
 
-         <div class="row">
+         <div class="row" id="askRow">
             <h3>2) Ask a Question</h3>
             <input type="text" id="question" placeholder="Type your question..." />
             <label style="display:block; margin: 0.5rem 0;">
                Top K:
                <input type="number" id="k" value="5" min="1" max="20" style="width:80px;" />
             </label>
-            <button id="askBtn">Ask</button>
+            <button id="askBtn" type="button">Ask</button>
          </div>
 
-         <div class="row">
+         <div class="row" style="position:relative;">
             <h3>Answer</h3>
             <div id="answer" class="answer">(no answer yet)</div>
+            <div id="askLoader" style="display:none; position:absolute; inset:0; background:rgba(255,255,255,0.8); align-items:center; justify-content:center; z-index:2; font-size:1.2em; color:#4A90E2; font-weight:bold;">
+               <span>
+                  <svg width="28" height="28" viewBox="0 0 50 50" style="vertical-align:middle; margin-right:0.5em;"><circle cx="25" cy="25" r="20" fill="none" stroke="#4A90E2" stroke-width="6" stroke-linecap="round" stroke-dasharray="100" stroke-dashoffset="80"><animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="1s" repeatCount="indefinite"/></circle></svg>
+                  Loading...
+               </span>
+            </div>
          </div>
 
          <div class="row">
@@ -126,41 +159,146 @@
       </div>
 
       <script>
-         const baseUrl = ""; 
+         const baseUrl = "";
+         let token = null;
+         let role = null;
+
+         function setToken(t, r) {
+            token = t; role = r;
+            if (t) {
+               localStorage.setItem("jwtToken", t);
+               localStorage.setItem("jwtRole", r);
+            } else {
+               localStorage.removeItem("jwtToken");
+               localStorage.removeItem("jwtRole");
+            }
+         }
+         function autoLogin() {
+            token = localStorage.getItem("jwtToken");
+            role = localStorage.getItem("jwtRole");
+         }
+         function show(panelId) {
+            document.getElementById("loginPanel").style.display = "none";
+            document.getElementById("mainPanel").style.display = "none";
+            document.getElementById(panelId).style.display = "";
+         }
+
+         // Show/hide UI depending on role
+         function updateRoleUI() {
+            document.getElementById("logoutBtn").style.display = "inline-block";
+            document.getElementById("userInfo").innerText =
+               token ? `Logged in as: ${role}` : "";
+            document.getElementById("uploadRow").style.display =
+               (role === "ADMIN") ? "" : "none";
+         }
+
+         document.getElementById("loginBtn").onclick = async () => {
+            const username = document.getElementById("loginUser").value.trim();
+            const password = document.getElementById("loginPass").value;
+            if (!username || !password) {
+               document.getElementById("loginStatus").innerText = "Enter both username and password";
+               return;
+            }
+            document.getElementById("loginStatus").innerText = "Signing in...";
+            try {
+               const res = await fetch((baseUrl || "") + "/auth/login", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ username, password })
+               });
+               const data = await res.json();
+               if (res.ok && data.token) {
+                  setToken(data.token, data.role);
+                  document.getElementById("loginUser").value = "";
+                  document.getElementById("loginPass").value = "";
+                  show("mainPanel");
+                  updateRoleUI();
+               } else {
+                  setToken(null, null);
+                  document.getElementById("loginStatus").innerText =
+                     "Login failed: " + (data.error || "Unknown error");
+               }
+            } catch (e) {
+               setToken(null, null);
+               document.getElementById("loginStatus").innerText =
+                  "Network or server error. Try again.";
+            }
+         };
+
+         document.getElementById("logoutBtn").onclick = () => {
+            setToken(null, null);
+            show("loginPanel");
+         };
 
          document.getElementById("uploadBtn").onclick = async () => {
+            if (!token) { show("loginPanel"); return; }
             const f = document.getElementById("fileInput").files[0];
             if (!f) { alert("Choose a file"); return; }
             const fd = new FormData();
             fd.append("file", f);
 
-            const res = await fetch((baseUrl || "") + "/api/upload", { method: "POST", body: fd });
+            const res = await fetch((baseUrl || "") + "/api/upload", {
+               method: "POST",
+               headers: { "Authorization": "Bearer " + token },
+               body: fd
+            });
             const txt = await res.text();
             document.getElementById("uploadStatus").innerText =
                res.ok ? "✅ Uploaded successfully" : "❌ Upload failed: " + txt;
+            if (res.status === 401 || res.status === 403) {
+               setToken(null, null);
+               show("loginPanel");
+            }
          };
 
-         document.getElementById("askBtn").onclick = async () => {
+         document.getElementById("askBtn").onclick = async (event) => {
+            if (event) event.preventDefault();
+            if (!token) { show("loginPanel"); return; }
             const q = document.getElementById("question").value;
             const k = document.getElementById("k").value;
             if (!q) { alert("Enter a question"); return; }
+            // Show loader
+            document.getElementById("askLoader").style.display = "flex";
+            try {
+               const url = new URL((baseUrl || window.location.origin) + "/api/query");
+               url.searchParams.set("q", q);
+               url.searchParams.set("k", k);
 
-            const url = new URL((baseUrl || window.location.origin) + "/api/query");
-            url.searchParams.set("q", q);
-            url.searchParams.set("k", k);
+               const res = await fetch(url.toString(), {
+                  method: "GET",
+                  headers: { "Authorization": "Bearer " + token }
+               });
+               if (res.status === 401 || res.status === 403) {
+                  setToken(null, null);
+                  show("loginPanel");
+                  return;
+               }
+               const json = await res.json();
 
-            const res = await fetch(url.toString(), { method: "GET" });
-            const json = await res.json();
-
-            document.getElementById("answer").innerText = json.answer || "(no answer)";
-            const sourcesEl = document.getElementById("sources");
-            sourcesEl.innerHTML = "";
-            if (Array.isArray(json.chunks)) {
-               sourcesEl.innerText = json.chunks.map(c =>
-                  `📑 docId=${c.docId}, chunkIndex=${c.chunkIndex}\n` + (c.content || "")
-               ).join("\n---\n");
+               document.getElementById("answer").innerText = json.answer || "(no answer)";
+               const sourcesEl = document.getElementById("sources");
+               sourcesEl.innerHTML = "";
+               if (Array.isArray(json.chunks)) {
+                  sourcesEl.innerText = json.chunks.map(c =>
+                     `📑 docId=${c.docId}, chunkIndex=${c.chunkIndex}\n` + (c.content || "")
+                  ).join("\n---\n");
+               }
+            } finally {
+               // Hide loader
+               document.getElementById("askLoader").style.display = "none";
             }
          };
-      </script> 
+
+         // On page load
+         (function() {
+            autoLogin();
+            if (token) {
+               show("mainPanel");
+               updateRoleUI();
+            } else {
+               show("loginPanel");
+            }
+         })();
+      </script>
    </body>
 </html>

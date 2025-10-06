@@ -3,11 +3,14 @@
 This project is a Spring Boot + PostgreSQL application that supports document upload, chunking, embedding generation, and retrieval-augmented generation (RAG) for intelligent document Q&A.
 
 ## Features
+- Secure login and JWT-based authentication.
+- Role-based access: **Admin** can upload, **User/Admin** can query/ask questions.
 - Upload PDF documents.
 - Extract and chunk text content.
 - Generate embeddings using Hugging Face models.
 - Store document metadata and embeddings in PostgreSQL.
 - Perform semantic search for question answering.
+- User-friendly UI: loader shown when waiting for results.
 
 ## Tech Stack
 - **Spring Boot (Java)**: Handles the web backend, business logic, and REST/GraphQL APIs.
@@ -26,6 +29,7 @@ This project is a Spring Boot + PostgreSQL application that supports document up
 - **LM Studio** (local embedding API)
 
 <img width="1512" height="856" alt="Screenshot 2025-09-15 at 6 10 34 PM" src="https://github.com/user-attachments/assets/df083713-5528-4a5c-a74a-8ab4b9e12c66" />
+
 ## Directory Layout (Key Files)
 
 - `src/main/java/com/documentrag/doc_rag/controller/` — Contains all controllers for REST and GraphQL (see `RagGraphQLController.java`).
@@ -34,8 +38,16 @@ This project is a Spring Boot + PostgreSQL application that supports document up
 - `src/main/java/com/documentrag/doc_rag/graphql/` — GraphQL DTOs/types for API responses.
 - `src/main/resources/graphql/` — GraphQL schema definitions.
 - `src/main/resources/application.properties` — Configuration (database, ports, API keys, etc.)
-
 ---
+
+## Authentication & Authorization
+
+- **REST API endpoints** (e.g., `/api/query`, `/api/upload`) require login, a valid JWT, and proper role (admin/user) rights.
+- **GraphQL endpoints** (`/graphql`, `/graphiql`) are fully open—no authentication or JWT required.
+- **Admin** users (username: `admin`, password: `adminpass`) can upload, view, and query documents.
+- **User** users (username: `user`, password: `userpass`) can only query/ask questions and view answers.
+- The app enforces these rules both in UI (hiding upload tools from users) and at the backend via security configuration.
+- JWT is stored in browser localStorage, sent with each REST API request as `Authorization: Bearer ...`.
 
 ## Example User Flow
 
@@ -58,20 +70,25 @@ This project is a Spring Boot + PostgreSQL application that supports document up
 ---
 
 
-
 ## API Endpoints & Usage
+**Access Control**  
+- REST API endpoints: Require JWT and enforce role-based access.  
+- GraphQL endpoints: No authentication required—fully open.
 
-### REST Endpoint
+---
+
+### REST Endpoint (Requires Authentication)
 
 - **Semantic Search (RAG Retrieval)**
     - URL: `http://localhost:8080/api/query`
     - Method: `GET`
+    - Headers: `Authorization: Bearer <JWT token>`
     - Params:
         - `q`: your query string
         - `k`: (optional) number of relevant chunks to return (default: 5)
     - Example:
       ```
-      curl "http://localhost:8080/api/query?q=What is angioplasty?&k=3"
+      curl "http://localhost:8080/api/query?q=What is angioplasty?&k=3" -H "Authorization: Bearer <JWT>"
       ```
     - Returns:
         ```json
@@ -84,11 +101,12 @@ This project is a Spring Boot + PostgreSQL application that supports document up
         }
         ```
 
-### GraphQL Endpoint
+### GraphQL Endpoint (No Authentication Required)
 
 - **Querying via GraphQL**
     - URL: `http://localhost:8080/graphql`
     - Method: `POST`
+    - No authentication required. Anyone can POST/query.
     - Example Query:
       ```graphql
       {
@@ -112,12 +130,13 @@ This project is a Spring Boot + PostgreSQL application that supports document up
 
 - **GraphiQL UI (Web IDE)**
     - URL: `http://localhost:8080/graphiql`
-    - Use this in your browser for interactive query/testing.
+    - Use this in your browser for interactive query/testing. Open for everyone.
 
 ### Troubleshooting & Notes
 
 - Ensure your backend is running and all required services are up (DB and embedding model).
-- For authentication or CORS issues, adjust your Spring Boot configuration or security settings as needed.
+- If you get a 401/403 error from REST APIs, your JWT was missing, expired, or not authorized for that feature.
 - Both endpoints use the same retrieval and RAG backend for consistent answers.
+- **Loader**: When submitting questions in the UI, a loading indicator will display while the system generates answers.
 
 ---
